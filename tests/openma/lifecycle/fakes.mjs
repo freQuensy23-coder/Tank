@@ -20,8 +20,9 @@ export function setup() {
     async renew({fence}) { return await this.isCurrent(fence) ? {type:'renewed',fence} : {type:'lost'}; },
     async publish({fence,workspaceCandidate}) {
       if(!await this.isCurrent(fence))return {type:'lost'};
-      rows.get(key(fenceScope(fence))).publication={workspaceCandidate:structuredClone(workspaceCandidate)};
-      return {type:'published',revision:1};
+      const row=rows.get(key(fenceScope(fence))),revision=(row.publication?.revision??0)+1;
+      row.publication={workspaceCandidate:structuredClone(workspaceCandidate),revision,generation:fence.generation};
+      return {type:'published',revision};
     },
     async release({fence}) { if(await this.isCurrent(fence))rows.get(key(fenceScope(fence))).active=false; },
   };

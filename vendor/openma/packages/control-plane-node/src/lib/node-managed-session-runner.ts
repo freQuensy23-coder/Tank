@@ -4,6 +4,7 @@ import {
   withSandboxExecutionGuard,
   type SandboxExecutor,
 } from "@open-managed-agents/sandbox";
+import { ExecutionRecoveryRefusal } from "./execution-recovery-refusal.js";
 import { randomUUID } from "node:crypto";
 import type {
   HarnessContext,
@@ -32,6 +33,7 @@ import { ManagedNodeHarnessRuntime } from "./node-managed-harness-runtime.js";
 import type { WorkspaceBinding, WorkspacePersistencePort, RuntimeResourceScope } from "@open-managed-agents/runtime-resource-contract";
 import type { NodeManagedWorkspaceCheckpoints } from "./node-managed-workspace-checkpoints.js";
 import { ScopedSessionMap } from "./scoped-session-map.js";
+import { RetainedExecutionFenceLost, RetainedIdleUnconfirmed, RetainedResumeFailed } from "./tank-retained/idle-errors.js";
 import {
   ManagedNodeSubagents,
   managedEventThread,
@@ -143,7 +145,7 @@ export interface DefaultNodeManagedSessionRunnerDependencies {
   retainedLifecycle?: {
     /** Resolves false when the bound warm sandbox is no longer reusable. */
     bind(input: ManagedRunnerContext & { sandbox: SandboxExecutor; executionFence?: SessionExecutionFence; signal?: AbortSignal }): Promise<boolean | void>;
-    idle(input: ManagedRunnerContext): Promise<void>;
+    idle(input: ManagedRunnerContext & { executionFence?: SessionExecutionFence; signal?: AbortSignal }): Promise<void>;
     abandon(input: ManagedRunnerContext): Promise<void>;
     archive(input: StopNodeManagedSessionRuntime): Promise<void>;
   };
@@ -334,6 +336,7 @@ export class DefaultNodeManagedSessionRunner
             binding: workspace.binding,
           }).catch(() => undefined);
         }
+        await this.finishTurn(input, signal);
         await sandbox.destroy?.().catch(() => undefined);
         throw error;
       }
@@ -347,6 +350,19 @@ export class DefaultNodeManagedSessionRunner
       if (registered && this.abortControllers.get(input) === startup) {
         this.abortControllers.delete(input);
       }
+    }
+  }
+
+  async finishTurn(input: ManagedRunnerContext & { executionFence?: SessionExecutionFence }, signal: AbortSignal): Promise<void> {
+    if (signal.aborted && abortedError(signal).message === "lease_lost") {
+      await this.dependencies.retainedLifecycle?.abandon(input);
+      return;
+    }
+    try {
+      await this.dependencies.retainedLifecycle?.idle({ ...input, signal });
+    } catch (error) {
+      if (error instanceof RetainedExecutionFenceLost || error instanceof RetainedIdleUnconfirmed) throw error;
+      throw new RetainedIdleUnconfirmed('retained_idle_unconfirmed', error);
     }
   }
 
@@ -408,6 +424,10 @@ export class DefaultNodeManagedSessionRunner
       event.type !== "user.define_outcome") {
       throw new Error(`Managed Node runner does not yet support ${event.type}`);
     }
+    if (input.executionFence !== undefined && input.continuationPlan !== undefined &&
+      input.continuationPlan.generation !== input.executionFence.generation) {
+      throw new ExecutionRecoveryRefusal("Session continuation belongs to a different execution generation");
+    }
     const rawSandbox = this.sandboxes.get(input);
     if (rawSandbox === undefined) {
       throw new Error(`Session ${input.sessionId} sandbox was not started`);
@@ -463,20 +483,24 @@ export class DefaultNodeManagedSessionRunner
         remainingInputIds: input.continuationPlan.remainingInputIds
       };
     }
-    if (!["noop", "finalize"].includes(input.continuationPlan?.mode ?? "")) {
+    if (!["noop", "finalize", "failure"].includes(input.continuationPlan?.mode ?? "")) {
       const started = runtime.broadcastProducedEvent({ type: "session.status_running" });
       if (phaseResult.yield !== undefined && phaseResult.yield.phaseStartEventId === '')
         phaseResult.yield.phaseStartEventId = started;
     }
     let turnTools: HarnessContext["tools"] | undefined;
     let runFailed = false;
+    let retainedSafetyFailure = false;
+    let emitRunFailure: (() => void) | undefined;
     let recoveryRefused = false;
+    const reclaimed = (input.executionFence?.generation ?? 0) > 1;
+    const finalizing = input.continuationPlan?.mode === 'finalize';
     try {
       if (input.continuationPlan?.mode === 'failure') {
         recoveryRefused = true;
         const cause = input.continuationPlan.failure ?? 'Original execution recovery refused ambiguous committed output';
         runtime.broadcastProducedEvent({ type: 'session.error', error: { type: 'unknown_error', message: cause, retryStatus: 'terminal' } });
-        throw new Error(cause);
+        throw new ExecutionRecoveryRefusal(cause);
       }
       if (["intake", "noop", "finalize"].includes(input.continuationPlan?.mode ?? ""))
         return phaseResult;
@@ -600,7 +624,8 @@ export class DefaultNodeManagedSessionRunner
             if (!(error instanceof Error))
               throw error;
             const sideEffectFree = runtime.agentEventCount === agentEventsBefore;
-            if (!sideEffectFree
+            if (reclaimed || input.continuationPlan !== undefined || !sideEffectFree
+              || error instanceof RetainedIdleUnconfirmed || error instanceof RetainedExecutionFenceLost || error instanceof RetainedResumeFailed
               || attempt >= retry.attempts
               || abortController.signal.aborted
               || isNonRetryableHarnessError(error)) {
@@ -696,9 +721,10 @@ export class DefaultNodeManagedSessionRunner
     }
     catch (error) {
       runFailed = true;
-      if (abortController.signal.reason === "lease_lost" || recoveryRefused)
+      retainedSafetyFailure = error instanceof RetainedIdleUnconfirmed || error instanceof RetainedExecutionFenceLost;
+      if (abortController.signal.reason === "lease_lost" || reclaimed || recoveryRefused || retainedSafetyFailure)
         throw error;
-      runtime.broadcastProducedEvent({
+      emitRunFailure = () => runtime.broadcastProducedEvent({
         type: "session.error",
         error: {
           type: "unknown_error",
@@ -708,6 +734,7 @@ export class DefaultNodeManagedSessionRunner
           retryStatus: "exhausted",
         },
       });
+      if (this.dependencies.retainedLifecycle === undefined) emitRunFailure();
       throw error;
     }
     finally {
@@ -734,8 +761,8 @@ export class DefaultNodeManagedSessionRunner
         finalizationError = error instanceof Error ? error : new Error(String(error));
       }
       try {
-        if (input.executionFence !== undefined &&
-          this.dependencies.synchronizeSandbox !== undefined) {
+        if (!finalizing && !recoveryRefused && abortController.signal.reason !== "lease_lost" &&
+          input.executionFence !== undefined && this.dependencies.synchronizeSandbox !== undefined) {
           const executionFence = input.executionFence;
           await this.sandboxRuntimes.get(input)?.withSandbox(async () => {
             await this.dependencies.synchronizeSandbox!({
@@ -755,7 +782,7 @@ export class DefaultNodeManagedSessionRunner
       // Turn completion is a safe point: all harness/subagent activity has
       // drained. The interval is a target between such points, not a timer
       // that snapshots files while tools are still writing.
-      if (!runFailed && finalizationError === undefined && checkpointService !== undefined && workspace !== undefined && input.executionFence !== undefined) {
+      if (!finalizing && !runFailed && finalizationError === undefined && checkpointService !== undefined && workspace !== undefined && input.executionFence !== undefined) {
         try {
           const active = await checkpointService.active(workspace.scope);
           if (active?.candidate.id !== (workspace.activeId ?? undefined)) {
@@ -781,8 +808,8 @@ export class DefaultNodeManagedSessionRunner
           finalizationError = error instanceof Error ? error : new Error(String(error));
         }
       }
-      const leaseLost = abortController.signal.reason === "lease_lost";
-      if (finalizationError !== undefined && !runFailed && !leaseLost) {
+      const emitFinalizationFailure = () => {
+        if (reclaimed || finalizationError === undefined || runFailed || abortController.signal.reason === "lease_lost") return;
         runtime.broadcastProducedEvent({
           type: "session.error",
           error: {
@@ -793,8 +820,10 @@ export class DefaultNodeManagedSessionRunner
             retryStatus: "exhausted",
           },
         });
-      }
-      if (!leaseLost && input.continuationPlan?.mode !== 'noop' && !recoveryRefused) {
+      };
+      const emitTerminal = () => {
+        if (abortController.signal.reason === "lease_lost" || input.continuationPlan?.mode === 'noop' || recoveryRefused || retainedSafetyFailure || (reclaimed && (runFailed || finalizationError !== undefined)))
+          return;
         const remaining = input.continuationPlan?.mode === 'intake'
           ? input.continuationPlan.remaining : runtime.pendingConfirmations ?? [];
         const terminalId = runtime.broadcastProducedEvent({
@@ -806,10 +835,16 @@ export class DefaultNodeManagedSessionRunner
         });
         if (phaseResult.yield !== undefined)
           phaseResult.yield.terminalEventId = terminalId;
+      };
+      const retained = this.dependencies.retainedLifecycle !== undefined;
+      const terminalAfterCleanup = input.continuationPlan !== undefined && !runFailed && finalizationError === undefined;
+      if (!retained) {
+        emitFinalizationFailure();
+        if (!terminalAfterCleanup) emitTerminal();
       }
       try {
         await runtime.drain();
-        if (input.executionFence !== undefined && !recoveryRefused) {
+        if (input.executionFence !== undefined && !recoveryRefused && !finalizing && !abortController.signal.aborted) {
           await this.dependencies.afterExecution?.({
             workspaceId: input.workspaceId,
             session: input.session,
@@ -822,10 +857,7 @@ export class DefaultNodeManagedSessionRunner
       }
       finally {
         try {
-          if (abortController.signal.reason === "lease_lost")
-            await this.dependencies.retainedLifecycle?.abandon(input);
-          else
-            await this.dependencies.retainedLifecycle?.idle(input);
+          await this.finishTurn(input, abortController.signal);
         }
         finally {
           if (this.abortControllers.get(input) === abortController) {
@@ -833,8 +865,18 @@ export class DefaultNodeManagedSessionRunner
           }
         }
       }
+      if (retained && abortController.signal.reason !== "lease_lost") {
+        emitRunFailure?.();
+        emitFinalizationFailure();
+        if (!terminalAfterCleanup || !abortController.signal.aborted) emitTerminal();
+        await runtime.drain();
+      }
       if (finalizationError !== undefined && !runFailed) {
         throw finalizationError;
+      }
+      if (!retained && terminalAfterCleanup && !abortController.signal.aborted) {
+        emitTerminal();
+        await runtime.drain();
       }
       if (workspace !== undefined && !runFailed && !abortController.signal.aborted) {
         workspace.trusted = true;

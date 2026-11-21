@@ -30,6 +30,7 @@ import type {
 import { randomUUID } from "node:crypto";
 import { createStrictlyIncreasingEventStamp } from "./node-managed-harness-runtime.js";
 import { ScopedSessionMap } from "./scoped-session-map.js";
+import { RetainedExecutionFenceLost, RetainedIdleUnconfirmed, RetainedResumeFailed } from "./tank-retained/idle-errors.js";
 
 export type StartNodeManagedSessionRuntime = StartSessionExecution & {
   executionFence?: SessionExecutionFence;
@@ -73,6 +74,7 @@ export interface NodeManagedSessionRuntimeCoordination
 
 export interface NodeManagedSessionRuntimeEngine {
   start(input: StartNodeManagedSessionRuntime, output: (frame: unknown) => Promise<void>): Promise<void>;
+  finishTurn?(input: ExecuteNodeManagedSessionEvents, signal: AbortSignal): Promise<void>;
   stop(input: StopNodeManagedSessionRuntime): Promise<void>;
   accept(input: AcceptNodeManagedSessionEvents & {
     executionFence?: SessionExecutionFence;
@@ -109,6 +111,7 @@ export interface NodeManagedSessionRunnerAcceptInput extends AcceptNodeManagedSe
 
 export interface NodeManagedSessionRunner {
   start(input: StartNodeManagedSessionRuntime): Promise<void>;
+  finishTurn(input: ExecuteNodeManagedSessionEvents, signal: AbortSignal): Promise<void>;
   stop(input: StopNodeManagedSessionRuntime): Promise<void>;
   accept(input: NodeManagedSessionRunnerAcceptInput): Promise<void | SessionExecutionPhaseResult>;
   archiveThread(input: ArchiveNodeManagedSessionThread): Promise<void>;
@@ -149,6 +152,10 @@ export class ApplicationBackedNodeManagedSessionRuntimeEngine
     }
   }
 
+  finishTurn(input: ExecuteNodeManagedSessionEvents, signal: AbortSignal): Promise<void> {
+    return this.dependencies.runner.finishTurn(input, signal);
+  }
+
   async accept(input: AcceptNodeManagedSessionEvents): Promise<void | SessionExecutionPhaseResult> {
     const output = this.outputs.get(input);
     if (output === undefined) {
@@ -167,6 +174,9 @@ export class ApplicationBackedNodeManagedSessionRuntimeEngine
     let continuationPlan: Exclude<ContinuationPlan, {
       mode: 'blocked';
     }> | undefined;
+    if (executionFence !== undefined && executionFence.generation > 1 && this.dependencies.continuationSnapshot === undefined) {
+      throw new Error("Reclaimed execution requires a continuation snapshot");
+    }
     if (executionFence !== undefined && this.dependencies.continuationSnapshot !== undefined) {
       const snapshot = await this.dependencies.continuationSnapshot(input);
       const plan = planSessionContinuation(snapshot, executionFence.executionId);
@@ -308,6 +318,7 @@ export class DefaultNodeManagedSessionRuntimeDriver
 
   async accept(input: ExecuteNodeManagedSessionEvents): Promise<void | SessionExecutionPhaseResult> {
     const fence = input.executionFence;
+    const reclaimed = fence !== undefined && fence.generation > 1;
     if (fence !== undefined &&
       (fence.workspaceId !== input.workspaceId ||
         fence.sessionId !== input.sessionId)) {
@@ -318,6 +329,7 @@ export class DefaultNodeManagedSessionRuntimeDriver
     const abortController = new AbortController();
     this.startAborts.set(input, abortController);
     const signal = abortController.signal;
+    let started = false;
     try {
       const retry = this.dependencies.startRetry ?? {
         attempts: 3,
@@ -339,19 +351,23 @@ export class DefaultNodeManagedSessionRuntimeDriver
             ...(fence !== undefined && { executionFence: fence }),
             signal,
           });
+          started = true;
           break;
         }
         catch (error) {
-          if (signal.aborted || isAbortError(error)) {
+          if (error instanceof RetainedIdleUnconfirmed || error instanceof RetainedExecutionFenceLost) throw error;
+          if (signal.aborted || (!reclaimed && isAbortError(error))) {
             await this.finishCancelledStart(input, signal, announcedRetry);
             throw signal.aborted ? abortedError(signal) : error;
           }
-          if (attempt >= Math.max(1, retry.attempts)) {
-            await this.projectStartFailure(input, error, "exhausted");
+          if (error instanceof RetainedResumeFailed || isAbortError(error) || attempt >= Math.max(1, retry.attempts)) {
+            if (!reclaimed) await this.projectStartFailure(input, error, "exhausted");
             throw error;
           }
-          await this.projectStartFailure(input, error, "retrying");
-          announcedRetry = true;
+          if (!reclaimed) {
+            await this.projectStartFailure(input, error, "retrying");
+            announcedRetry = true;
+          }
           if (signal.aborted) {
             await this.finishCancelledStart(input, signal, announcedRetry);
             throw abortedError(signal);
@@ -375,7 +391,14 @@ export class DefaultNodeManagedSessionRuntimeDriver
       await this.outputChains.get(input);
       return phase;
     }
+    catch (error) {
+      if (started && !(error instanceof RetainedIdleUnconfirmed || error instanceof RetainedExecutionFenceLost)) {
+        await this.dependencies.engine.finishTurn?.(input, signal);
+      }
+      throw error;
+    }
     finally {
+      if (fence !== undefined) await this.outputChains.get(input)?.catch(() => undefined);
       if (this.startAborts.get(input) === abortController) {
         this.startAborts.delete(input);
       }
@@ -506,9 +529,14 @@ export class DefaultNodeManagedSessionRuntimeDriver
           ...(executionFence !== undefined && { executionFence }),
         });
         if (projected.type === "recorded") break;
-        if (projected.type === "not_found") return;
+        if (projected.type === "not_found") {
+          if (executionFence !== undefined && executionFence.generation > 1) {
+            throw new Error(`Session ${workspaceId}/${sessionId} output could not be recorded`);
+          }
+          return;
+        }
         if (projected.type === "execution_fence_lost") {
-          throw new Error(
+          throw new RetainedExecutionFenceLost(
             `Session ${workspaceId}/${sessionId} execution fence was lost`,
           );
         }

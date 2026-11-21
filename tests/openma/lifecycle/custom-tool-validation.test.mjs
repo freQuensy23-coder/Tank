@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { planSessionContinuation } from '../../../vendor/openma/packages/session-runtime-contract/src/continuation.ts';
+import { planSessionContinuation, readyToolCalls } from '../../../vendor/openma/packages/session-runtime-contract/src/continuation.ts';
 
 const text = value => [{ type: 'text', text: value }];
 const message = id => ({ id, type: 'user.message', content: text('Record the event') });
@@ -32,7 +32,7 @@ function append(snapshot, executionId, event) {
 
 function admit(snapshot, id, input, state = 'running') {
   const event = append(snapshot, undefined, input);
-  snapshot.executions.push({ id, laneId: 'sthr_primary', state, revision: 1, events: [event], attemptCount: 1, interruptRequestedAt: null });
+  snapshot.executions.push({ id, laneId: 'sthr_primary', state, revision: 1, events: [event], generation: 1, interruptRequestedAt: null });
 }
 
 function journal(output, state = 'completed') {
@@ -59,6 +59,38 @@ function assertFailure(snapshot, executionId, reason) {
   assert.equal(plan.mode, 'failure');
   assert.match(plan.failure, reason);
 }
+
+test('only open calls declared by settled or durably yielded phases can replay', () => {
+  const ready = snapshot => readyToolCalls(snapshot, ['original']).get('original');
+  const uncommitted = waiting();
+  uncommitted.executions[0].state = 'running';
+  assert.deepEqual(ready(uncommitted), []);
+
+  const committed = waiting();
+  assert.deepEqual(ready(committed), ['corrected']);
+  const interrupted = structuredClone(committed);
+  append(interrupted, undefined, { id: 'interrupt', type: 'user.interrupt' });
+  assert.deepEqual(ready(interrupted), []);
+  const invalid = structuredClone(committed);
+  invalid.orderedEvents.at(-1).event.stopReason.eventIds = ['invalid', 'corrected'];
+  assert.throws(() => ready(invalid), /Invalid custom-tool group declaration/);
+
+  const yielded = waiting();
+  const owner = yielded.executions[0];
+  owner.state = 'queued';
+  owner.events.push(append(yielded, undefined, message('remaining')));
+  append(yielded, 'original', idle('progress', requires(['corrected'])));
+  yielded.orderedEvents.at(-1).executionMetadata.progress = {
+    version: 1, laneId: owner.laneId, attemptId: 'original-attempt-1', generation: 1,
+    previousReceiptId: null, phaseInputIds: ['prompt'], consumedInputIds: ['prompt'],
+    remainingInputIds: ['remaining'], phaseStartEventId: 'running', terminalEventId: 'declaration',
+  };
+  assert.deepEqual(ready(yielded), ['corrected']);
+  const reclaimed = structuredClone(yielded);
+  Object.assign(reclaimed.executions[0], { state: 'running', generation: 2 });
+  append(reclaimed, 'original', custom('new-unsettled-call'));
+  assert.deepEqual(ready(reclaimed), ['corrected']);
+});
 
 test('a locally rejected custom call does not poison the corrected callback or its retained history', () => {
   const snapshot = waiting();
@@ -191,30 +223,31 @@ for (const [name, corrupt] of [
   assertFailure(snapshot, 'reply', /Untrusted continuation journal order/);
 });
 
-test('owner retry without an idle receipt reconstructs only unresolved custom calls from the completed latest span', () => {
-  const snapshot = journal(span('model', [custom('invalid', 'MINUTE'), custom('corrected')], [localResult('invalid-result', 'invalid')]), 'running');
-  snapshot.executions[0].attemptCount = 2;
-  const plan = planSessionContinuation(structuredClone(snapshot), 'original');
-  assert.equal(plan.mode, 'finalize');
-  assert.deepEqual(plan.recoveredStopReason, requires(['corrected']));
-  assert.deepEqual(plan.historyEvents.filter(event => event.type.startsWith('agent.')).map(event => event.id), ['invalid', 'corrected', 'invalid-result']);
+for (const [name, output] of [
+  ['no committed output', []],
+  ['a completed model span with unresolved custom calls',
+    span('model', [custom('invalid', 'MINUTE'), custom('corrected')], [localResult('invalid-result', 'invalid')])],
+  ['a completed model span with every local tool resolved',
+    span('model', [custom('invalid', 'MINUTE')], [localResult('invalid-result', 'invalid')])],
+  ['a completed span after an earlier resolved tool round', rejectedThenCorrected()],
+  ['an idle event on a child lane', [{ ...idle('child-idle', { type: 'end_turn' }), sessionThreadId: 'child' }]],
+  ['a successful idle event followed by more work',
+    [idle('idle', { type: 'end_turn' }), { id: 'next-span', type: 'span.model_request_start' }]],
+]) test(`a successor refuses to replay a claimed phase with ${name}`, () => {
+  const snapshot = journal(output, 'running');
+  if (!output.length) snapshot.orderedEvents.pop();
+  snapshot.executions[0].generation = 2;
+  assertFailure(snapshot, 'original', /without a committed successful terminal event/);
 });
 
-test('owner retry after a fully resolved custom-tool round resumes the model instead of inventing end_turn', () => {
-  const snapshot = journal(span('model', [custom('invalid', 'MINUTE')], [localResult('invalid-result', 'invalid')]), 'running');
-  const plan = planSessionContinuation(snapshot, 'original');
-  assert.equal(plan.mode, 'model');
-  assert.equal(plan.recoveredStopReason, undefined);
-  assert.deepEqual(plan.remaining, []);
-  assert.deepEqual(plan.historyEvents.filter(event => event.type.startsWith('agent.')).map(event => event.id), ['invalid', 'invalid-result']);
-});
-
-test('earlier-span local results do not settle the latest-span custom call during owner retry', () => {
-  const snapshot = journal(rejectedThenCorrected(), 'running');
+test('a successor finalizes only the unresolved custom calls declared by a committed terminal', () => {
+  const snapshot = journal([...rejectedThenCorrected(), idle('declared', requires(['corrected']))], 'running');
+  snapshot.executions[0].generation = 2;
   const plan = planSessionContinuation(snapshot, 'original');
   assert.equal(plan.mode, 'finalize');
   assert.deepEqual(plan.recoveredStopReason, requires(['corrected']));
-  assert.deepEqual(plan.historyEvents.filter(event => event.type.startsWith('agent.')).map(event => event.id), ['invalid', 'invalid-result', 'corrected']);
+  assert.deepEqual(plan.historyEvents.filter(event => event.type.startsWith('agent.')).map(event => event.id),
+    ['invalid', 'invalid-result', 'corrected']);
 });
 
 for (const isError of [false, undefined, null]) test(`local results settle custom calls when isError is ${isError}`, () => {
@@ -294,5 +327,7 @@ for (const boundary of ['missing', 'failed']) test(`local results cannot recover
   const output = span('model', [custom('invalid', 'MINUTE')], [localResult('invalid-result', 'invalid')]);
   if (boundary === 'missing') output.splice(output.findIndex(event => event.type === 'span.model_request_end'), 1);
   else output.find(event => event.type === 'span.model_request_end').isError = true;
-  assertFailure(journal(output, 'running'), 'original', /no complete model\/tool terminal boundary/);
+  const snapshot = journal(output, 'running');
+  snapshot.executions[0].generation = 2;
+  assertFailure(snapshot, 'original', /without a committed successful terminal event/);
 });

@@ -3,7 +3,8 @@ import json
 from datetime import UTC
 
 import pytest
-from model_fixture import audited_result, model_arguments
+from model_fixture import audited_result
+from replay_openma_fixture import CommittedPhaseProvider
 
 from tank.replay import ReplayError, digest, load_inputs, original_replay_messages
 from tank.settings import Settings
@@ -837,7 +838,6 @@ async def test_actual_f24_phased_producers_keep_session_and_immutable_checkpoint
     reference_packet, tmp_path, publication, repository=None, fail_later=False, missing_lookup=None
 ):
     """Actual source/observation producers; MATERIAL stop isolates timeline mechanics from economic fixtures."""
-    import asyncio
 
     import httpx
     from test_event_tools import unknown_assessment
@@ -901,36 +901,20 @@ async def test_actual_f24_phased_producers_keep_session_and_immutable_checkpoint
     )
     capture = view.advance(Timestamp("2026-10-16T12:01:00Z", "EXACT"))
     repo = repository if repository is not None else MemoryRepository()
-    queue = asyncio.Queue()
-    accepted = []
-    settled = set()
+    provider = CommittedPhaseProvider()
+    emit = provider.emit
     sent = []
     created = []
-    seq = 0
     stage = None
     item = None
     eid = None
     claim_id = None
     publications = []
 
-    class Stream(httpx.AsyncByteStream):
-        async def __aiter__(self):
-            while True:
-                yield await queue.get()
-
-    async def emit(event):
-        if event.get("type") == "agent.custom_tool_use":
-            event = dict(event, input=model_arguments(event["name"], event["input"]))
-        nonlocal seq
-        seq += 1
-        if event["type"] == "session.status_idle":
-            settled.update(accepted)
-        await queue.put(f"id: {seq}\ndata: {json.dumps(event)}\n\n".encode())
-
     async def tool(name, args, execution):
         await emit(
             {
-                "id": "call-" + str(seq),
+                "id": "call-" + execution,
                 "type": "agent.custom_tool_use",
                 "execution_id": execution,
                 "name": name,
@@ -942,21 +926,7 @@ async def test_actual_f24_phased_producers_keep_session_and_immutable_checkpoint
         nonlocal stage, item, eid, claim_id
         route = request.url.path
         if route.endswith("/executions"):
-            ids = request.url.params.get_list("ids[]")
-            assert set(ids) <= set(accepted)
-            return httpx.Response(
-                200,
-                json={
-                    "data": [
-                        {
-                            "execution_id": x,
-                            "state": "COMPLETED" if x in settled else "RUNNING",
-                            "settled_outcome": "COMPLETED" if x in settled else None,
-                        }
-                        for x in ids
-                    ]
-                },
-            )
+            return provider.status(request)
         if route.endswith("/v1/files"):
             return httpx.Response(200, json={"id": "file_mt"})
         if route.endswith("/resources"):
@@ -988,13 +958,12 @@ async def test_actual_f24_phased_producers_keep_session_and_immutable_checkpoint
         if route.endswith("/archive"):
             return httpx.Response(200, json={})
         if route.endswith("/events/stream"):
-            return httpx.Response(200, stream=Stream(), headers={"content-type": "text/event-stream"})
+            return provider.stream(request)
         if route.endswith("/events"):
             if request.method == "GET":
-                return httpx.Response(200, json={"data": []})
+                return provider.history(request)
             event = json.loads(request.content)["events"][0]
-            identity = "accepted-" + str(len(accepted))
-            accepted.append(identity)
+            identity = provider.accept(event)
             if event["type"] == "user.message":
                 assert "item_id" not in json.loads(event["content"][0]["text"])["message"]
                 item = "lead" if not sent else "confirmation"
@@ -1213,7 +1182,7 @@ async def test_actual_f24_phased_producers_keep_session_and_immutable_checkpoint
                     publications.append(result)
                     await emit(
                         {
-                            "id": "idle-" + str(seq),
+                            "id": "idle-" + identity,
                             "type": "session.status_idle",
                             "execution_id": identity,
                             "stop_reason": {"type": "end_turn"},
@@ -1226,7 +1195,7 @@ async def test_actual_f24_phased_producers_keep_session_and_immutable_checkpoint
                     ), result
                     await emit(
                         {
-                            "id": "idle-" + str(seq),
+                            "id": "idle-" + identity,
                             "type": "session.status_idle",
                             "execution_id": identity,
                             "stop_reason": {"type": "end_turn"},
