@@ -2,8 +2,7 @@
 # The one way Tank reaches production, run by .github/workflows/deploy.yml as `deploy.sh <git sha>`
 # in the host directory holding compose.yaml, .env and this script. It starts the CI-built images
 # of that commit, proves within 8 minutes that they work, and otherwise returns to the previous
-# commit. PostgreSQL, ClickHouse and OpenMA restart only when their image content changed;
-# tank-capture is replaced make-before-break so no minute of prints is lost.
+# commit. tank-capture is replaced make-before-break so no minute of prints is lost.
 set -euo pipefail
 cd "$(dirname "$(readlink -f "$0")")"
 SHA=${1:?usage: deploy.sh <git sha>}
@@ -93,7 +92,33 @@ start_grafana() {
     echo 'Grafana TLS login or anonymous denial failed'; return 1
   fi
 }
-content() { docker inspect -f '{{index .Config.Labels "org.tank.content"}}' "$1" 2>/dev/null || true; }
+content() { docker image inspect -f '{{index .Config.Labels "org.tank.content"}}' "$1"; }
+
+retained_image() {
+  local v=$1 svc=$2 container running ref id desired label target tagged
+  container=$(compose "$v" ps -a -q "$svc") || return 1
+  [ -n "$container" ] || return 0
+  running=$(docker inspect -f '{{.Config.Image}} {{.Image}}' "$container") || return 1
+  read -r ref id <<< "$running"
+  [[ ${ref##*:} =~ ^[a-f0-9]{40}$ && ${ref##*:} != "$v" ]] || return 0
+  desired=$(compose "$v" config --format json "$svc" | python3 -c 'import json,sys; print(json.load(sys.stdin)["services"][sys.argv[1]]["image"])' "$svc") || return 1
+  [[ $desired == "${ref%:*}:$v" ]] || return 0
+  label=$(content "$id") || return 1
+  target=$(content "$desired") || return 1
+  [[ $label =~ ^[a-f0-9]{64}$ && $label == "$target" ]] || return 0
+  tagged=$(docker image ls --no-trunc -q "$ref") || return 1
+  if [ -z "$tagged" ]; then docker tag "$id" "$ref" || return 1; fi
+  tagged=$(docker image inspect -f '{{.Id}}' "$ref") || return 1
+  if [[ $tagged == "$id" ]]; then printf '%s\n' "$ref"; fi
+}
+
+start_backend() {
+  local v=$1 svc=$2 ref files=()
+  ref=$(retained_image "$v" "$svc") || return 1
+  if [ -n "$ref" ]; then files=(-f -); fi
+  compose "$v" "${files[@]}" up -d --pull never --no-deps "$svc" <<< "services: {$svc: {image: '$ref'}}"
+}
+
 healthy() {
   for _ in $(seq 1 60); do
     [ "$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$1" 2>/dev/null)" = healthy ] && return 0
@@ -114,13 +139,7 @@ roll() {
   echo "pull $v $(date -u +%T)"
   compose "$v" pull -q || return 1
   for svc in postgres clickhouse openma; do
-    if [ "$(content "tank-$svc-1")" = "$(content "ghcr.io/frequensy23-coder/tank/tank-$svc:$v")" ]; then
-      echo "$svc unchanged"
-      compose "$v" up -d --no-deps --no-recreate "$svc" || return 1
-    else
-      echo "$svc recreate $(date -u +%T)"
-      compose "$v" up -d --no-deps "$svc" || return 1
-    fi
+    start_backend "$v" "$svc" || return 1
     healthy "tank-$svc-1" || { echo "$svc not healthy"; return 1; }
   done
   old_cap=$(docker ps -q --filter label=com.docker.compose.project=tank --filter label=com.docker.compose.service=tank-capture)

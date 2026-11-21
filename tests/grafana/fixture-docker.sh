@@ -8,7 +8,7 @@ case $1 in
         if [[ " $* " == *' -p tank-settings -f - config --format json '* ]]; then exec "$engine" compose "$@"; fi
         if [[ $TANK_VERSION == "$legacy" ]]; then export TANK_VERSION=$project-legacy; else export TANK_VERSION=$project; fi
         case " $* " in
-            *' config -q '*) exec "$engine" compose -p "$project" "$@" ;;
+            *' config -q '*|*' config --format json '*|*' ps -a -q '*) exec "$engine" compose -p "$project" "$@" ;;
             *' pull -q '*) exit 0 ;;
             *' up '*)
                 case $last in
@@ -43,13 +43,11 @@ case $1 in
                 exec "$engine" compose -p "$project" "$@" ;;
         esac ;;
     inspect)
+        if [[ $last =~ ^[0-9a-f]{12,64}$ ]]; then exec "$engine" inspect "${@:2}"; fi
         case $last in
             tank-postgres-1) exec "$engine" inspect "${@:2:$#-2}" "$project-postgres-1" ;;
-            ghcr.io/frequensy23-coder/tank/tank-postgres:"$legacy") exec "$engine" inspect "${@:2:$#-2}" "$image-legacy" ;;
-            ghcr.io/frequensy23-coder/tank/tank-postgres:*) exec "$engine" inspect "${@:2:$#-2}" "$image" ;;
-            capture-fixture|tank-clickhouse-1|tank-openma-1|tank-tank-1|ghcr.io/*)
+            capture-fixture|tank-clickhouse-1|tank-openma-1|tank-tank-1)
                 case $3 in
-                    *org.tank.content*) printf 'fixture\n' ;;
                     *StartedAt*) date -u +%FT%TZ ;;
                     *Health*) printf 'healthy\n' ;;
                     *State.Status*) printf 'running\n' ;;
