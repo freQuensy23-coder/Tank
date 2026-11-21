@@ -2707,8 +2707,7 @@ class SessionService:
         cap = self.settings.load_config("openma").get("max_running_sessions", DEFAULT_MAX_RUNNING_SESSIONS)
         if isinstance(cap, bool) or not isinstance(cap, int) or cap < 1:
             raise ConfigurationError("openma.yaml max_running_sessions must be a positive integer")
-        host_cap = getattr(self.settings, "analysis_concurrency", None)
-        return cap if host_cap is None else min(cap, host_cap)
+        return cap
 
     @staticmethod
     def running(session):

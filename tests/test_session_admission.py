@@ -16,9 +16,7 @@ import httpx
 import pytest
 
 from tank.agents import SessionService
-from tank.agents.sessions import AdmissionDeferred
 from tank.runtime import Runtime
-from tank.settings import Settings
 from tank.storage import MemoryRepository
 from tank.time_precision import collection_clock
 from tank.util import iso, parse_time, sha256, utcnow
@@ -243,30 +241,6 @@ async def test_cap_queues_turns_in_order_never_drops_and_running_session_bypasse
 
 async def _done(status, name):
     return await status(name) == "DONE"
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("host_cap,allowed", [(None, True), ("1", False), ("8", True)])
-async def test_host_ceiling_limits_new_turns_without_reducing_job_workers(monkeypatch, host_cap, allowed):
-    monkeypatch.delenv("TANK_ANALYSIS_CONCURRENCY", raising=False)
-    if host_cap is not None:
-        monkeypatch.setenv("TANK_ANALYSIS_CONCURRENCY", host_cap)
-    config = Settings()
-    assert config.workers == 8
-    repo = MemoryRepository()
-    await seed(repo)
-    await release(repo, "s2")
-    job = await repo.enqueue("AGENT_MESSAGE", {"kind": "NEW_ITEM", "item_id": "i_new"}, "new", priority=1)
-    async with httpx.AsyncClient(transport=httpx.MockTransport(lambda _: httpx.Response(500))) as http:
-        sessions = SessionService(repo, config, None, http=http)
-        assert sessions.running_session_cap() == (2 if allowed else 1)
-        if allowed:
-            await sessions.admit(job)
-        else:
-            with pytest.raises(AdmissionDeferred):
-                await sessions.admit(job)
-            await release(repo, "s1")
-            await sessions.admit(job)
 
 
 async def _waiting(repo, jobs, *names):
