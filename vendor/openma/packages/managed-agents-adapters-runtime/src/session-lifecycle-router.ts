@@ -170,25 +170,45 @@ export class EnvironmentAwareSessionEventStreamRouter
     return this.route(input);
   }
 
-  private async *route(
+  private route(
     input: SubscribeSessionEvents | SubscribeSessionThreadEvents,
   ): AsyncIterable<StreamSessionEvent> {
-    const environment = await this.dependencies.environments.find({
-      workspaceId: input.workspaceId,
-      environmentId: input.session.environmentId,
-    });
-    if (environment === null) {
-      throw new Error(
-        `Environment ${input.session.environmentId} was not found while streaming Session ${input.sessionId}`,
-      );
-    }
-    const stream = environmentExecutionAuthority(environment) === "session_execution"
-      ? this.dependencies.runtime
-      : this.dependencies.selfHosted;
-    if ("threadId" in input) {
-      yield* stream.subscribe(input);
-    } else {
-      yield* stream.subscribe(input);
-    }
+    return {
+      [Symbol.asyncIterator]: () => {
+        let closed = false;
+        let inner: AsyncIterator<StreamSessionEvent> | undefined;
+        const ready = (async () => {
+          const environment = await this.dependencies.environments.find({
+            workspaceId: input.workspaceId,
+            environmentId: input.session.environmentId,
+          });
+          if (environment === null) {
+            throw new Error(
+              `Environment ${input.session.environmentId} was not found while streaming Session ${input.sessionId}`,
+            );
+          }
+          const stream = environmentExecutionAuthority(environment) === "session_execution"
+            ? this.dependencies.runtime
+            : this.dependencies.selfHosted;
+          if (closed) return;
+          inner = ("threadId" in input
+            ? stream.subscribe(input)
+            : stream.subscribe(input))[Symbol.asyncIterator]();
+        })();
+        return {
+          next: async () => {
+            await ready;
+            if (closed || inner === undefined) return { done: true, value: undefined };
+            return inner.next();
+          },
+          return: async () => {
+            closed = true;
+            await ready.catch(() => undefined);
+            await inner?.return?.();
+            return { done: true, value: undefined };
+          },
+        };
+      },
+    };
   }
 }

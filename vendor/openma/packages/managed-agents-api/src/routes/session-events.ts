@@ -23,6 +23,7 @@ import {
   toStreamSessionEventsQuery,
 } from "../mappers/session-events";
 import type { SessionEventsApplicationPort } from "../ports/session-events";
+import { relayWithHeartbeat } from "./sse-relay";
 
 const SESSION_EVENT_HEARTBEAT_INTERVAL_MS = 10_000;
 
@@ -114,49 +115,36 @@ export function buildSessionEventRoutes(
       );
     }
 
-    return streamSSE(c, async (stream) => {
-      const iterator = result.events[Symbol.asyncIterator]();
-      let pendingEvent = iterator.next();
-      for (;;) {
-        let heartbeatTimer: ReturnType<typeof setTimeout> | undefined;
-        const next = await Promise.race([
-          pendingEvent.then((event) => ({ type: "event" as const, event })),
-          new Promise<{ type: "heartbeat" }>((resolve) => {
-            heartbeatTimer = setTimeout(
-              () => resolve({ type: "heartbeat" }),
-              SESSION_EVENT_HEARTBEAT_INTERVAL_MS,
-            );
-          }),
-        ]);
-        if (heartbeatTimer !== undefined) clearTimeout(heartbeatTimer);
-        if (next.type === "heartbeat") {
-          await stream.writeSSE({ event: "ping", data: "{}" });
-          continue;
-        }
-        if (next.event.done) break;
-        const event = next.event.value;
-        const wire = sessionStreamEventResponseSchema.safeParse(
-          toStreamSessionEventResponse(event),
-        );
-        if (!wire.success) {
-          const issue = wire.error.issues[0];
-          await stream.writeSSE({
-            event: "error",
-            data: JSON.stringify(
-              apiError(
-                `Application returned an invalid streamed ${event.type} event at ${issue?.path.join(".") || "event"}: ${issue?.message ?? "invalid value"}; ${JSON.stringify(wire.error.format()).slice(0, 1_500)}`,
+    return streamSSE(c, (stream) => relayWithHeartbeat(
+      stream,
+      result.events,
+      SESSION_EVENT_HEARTBEAT_INTERVAL_MS,
+      {
+        heartbeat: () => stream.writeSSE({ event: "ping", data: "{}" }),
+        deliver: async (event) => {
+          const wire = sessionStreamEventResponseSchema.safeParse(
+            toStreamSessionEventResponse(event),
+          );
+          if (!wire.success) {
+            const issue = wire.error.issues[0];
+            await stream.writeSSE({
+              event: "error",
+              data: JSON.stringify(
+                apiError(
+                  `Application returned an invalid streamed ${event.type} event at ${issue?.path.join(".") || "event"}: ${issue?.message ?? "invalid value"}; ${JSON.stringify(wire.error.format()).slice(0, 1_500)}`,
+                ),
               ),
-            ),
+            });
+            return false;
+          }
+          await stream.writeSSE({
+            event: wire.data.type,
+            data: JSON.stringify(wire.data),
           });
-          return;
-        }
-        await stream.writeSSE({
-          event: wire.data.type,
-          data: JSON.stringify(wire.data),
-        });
-        pendingEvent = iterator.next();
-      }
-    }, async (error, stream) => {
+          return true;
+        },
+      },
+    ), async (error, stream) => {
       await stream.writeSSE({
         event: "error",
         data: JSON.stringify(

@@ -612,49 +612,66 @@ export class NodeManagedSessionRuntimeAdapter
   subscribe(
     input: SubscribeSessionEvents | SubscribeSessionThreadEvents,
   ): AsyncIterable<StreamSessionEvent> {
-    return this.stream(input);
+    return {
+      [Symbol.asyncIterator]: () => this.open(input),
+    };
   }
 
-  private async *stream(
+  private open(
     input: SubscribeSessionEvents | SubscribeSessionThreadEvents,
-  ): AsyncIterable<StreamSessionEvent> {
+  ): AsyncIterator<StreamSessionEvent> {
     const deltaTypes = new Set(input.deltaEventTypes ?? []);
     const decoder = new RuntimeEventStreamDecoder(deltaTypes);
     const deltaEventIds = new Set<string>();
-    for await (const raw of this.driver.subscribe(input)) {
-      if (
-        "threadId" in input &&
-        (
-          raw === null ||
-          typeof raw !== "object" ||
-          (!(("sessionThreadId" in raw && raw.sessionThreadId === input.threadId) ||
-            ("session_thread_id" in raw && raw.session_thread_id === input.threadId)))
-        )
-      ) continue;
-      if (
-        raw !== null && typeof raw === "object" &&
-        "type" in raw && raw.type === "event_start" &&
-        "event" in raw && raw.event !== null && typeof raw.event === "object" &&
-        "id" in raw.event && typeof raw.event.id === "string" &&
-        "type" in raw.event &&
-        (raw.event.type === "agent.message" || raw.event.type === "agent.thinking")
-      ) {
-        if (deltaTypes.has(raw.event.type)) {
-          deltaEventIds.add(raw.event.id);
-          yield raw as StreamSessionEvent;
+    const source = this.driver.subscribe(input)[Symbol.asyncIterator]();
+    const ready: StreamSessionEvent[] = [];
+    return {
+      next: async () => {
+        for (;;) {
+          const queued = ready.shift();
+          if (queued !== undefined) return { done: false, value: queued };
+          const next = await source.next();
+          if (next.done) return { done: true, value: undefined };
+          const raw = next.value;
+          if (
+            "threadId" in input &&
+            (
+              raw === null ||
+              typeof raw !== "object" ||
+              (!(("sessionThreadId" in raw && raw.sessionThreadId === input.threadId) ||
+                ("session_thread_id" in raw && raw.session_thread_id === input.threadId)))
+            )
+          ) continue;
+          if (
+            raw !== null && typeof raw === "object" &&
+            "type" in raw && raw.type === "event_start" &&
+            "event" in raw && raw.event !== null && typeof raw.event === "object" &&
+            "id" in raw.event && typeof raw.event.id === "string" &&
+            "type" in raw.event &&
+            (raw.event.type === "agent.message" || raw.event.type === "agent.thinking")
+          ) {
+            if (deltaTypes.has(raw.event.type)) {
+              deltaEventIds.add(raw.event.id);
+              ready.push(raw as StreamSessionEvent);
+            }
+            continue;
+          }
+          if (
+            raw !== null && typeof raw === "object" &&
+            "type" in raw && raw.type === "event_delta" &&
+            "eventId" in raw && typeof raw.eventId === "string"
+          ) {
+            if (deltaEventIds.has(raw.eventId)) ready.push(raw as StreamSessionEvent);
+            continue;
+          }
+          ready.push(...decoder.decode(raw));
         }
-        continue;
-      }
-      if (
-        raw !== null && typeof raw === "object" &&
-        "type" in raw && raw.type === "event_delta" &&
-        "eventId" in raw && typeof raw.eventId === "string"
-      ) {
-        if (deltaEventIds.has(raw.eventId)) yield raw as StreamSessionEvent;
-        continue;
-      }
-      for (const event of decoder.decode(raw)) yield event;
-    }
+      },
+      return: async () => {
+        await source.return?.();
+        return { done: true, value: undefined };
+      },
+    };
   }
 }
 

@@ -15,6 +15,7 @@ const lanes = {
     "tests/openma/lifecycle/replay-attachment.test.mjs",
     "tests/openma/lifecycle/custom-tool-validation.test.mjs",
     "tests/openma/events/span-finish-reason.test.mjs",
+    "tests/openma/events/stream-release.test.mjs",
   ],
   "local-contract": [
     "deploy/openma_lifecycle/native-qualification.test.mjs",
