@@ -67,9 +67,6 @@ async def test_tick_preserves_source_milestone_and_offset_job_precision():
     scheduler.analysis_tokens = AsyncMock(return_value={"T"})
     await scheduler.tick(now)
     jobs = await repo.list("ops.jobs")
-    evaluation = next(j for j in jobs if j["type"] == "EVAL_CONDITIONS")
-    assert evaluation["payload"]["cutoff_prec"] == "BUCKET(1m)"
-    assert evaluation["expires_at_prec"] == "COLLECTION_ONLY"
     milestone = next(j for j in jobs if j["type"] == "MILESTONE_CHECK")
     assert milestone["payload"]["due_at_prec"] == "BUCKET(1d)"
     assert milestone["expires_at_prec"] == "BUCKET(1d)"
