@@ -67,6 +67,7 @@ def main():
         selected = select(shared)
         subprocess.run([*selected, "up", "-d", "--wait"], check=True, env=env)
         edge = subprocess.check_output([*selected, "ps", "-q", "edge"], text=True, env=env).strip()
+        run("docker", "cp", str(ROOT / "scripts/deploy/deploy.sh"), edge + ":/deploy.sh")
         run("docker", "cp", str(HERE / "edge-inner.py"), edge + ":/edge-inner.py")
         run("docker", "cp", str(ROOT / "deploy/grafana/nginx"), edge + ":/fixture-helper")
         run("docker", "exec", edge, "python3", "/edge-inner.py")

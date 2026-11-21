@@ -231,6 +231,9 @@ server {
     run("bash", HELPER, HOST)
     first = serial()
     wait_for_serial(first)
+    login = request(4, HOST, True, "/login")
+    assert "X-Tank-Route: grafana" in login
+    assert "X-Tank-Route:" not in request(6, HOST, True, "/login")
     setup_viewer()
     viewer = viewer_session()
     run("bash", HELPER, HOST)
@@ -249,8 +252,26 @@ server {
     print("PASS repeat setup, native renewal and served leaf replacement", flush=True)
 
 
+def https_ready():
+    script = Path("/deploy.sh").read_text()
+    start = script.index("https_ready() {")
+    end = script.index("\n}", start) + 2
+    return (
+        run(
+            "bash",
+            "-c",
+            script[start:end] + "\nexternal_host=$1; export CURL_CA_BUNDLE=/tmp/pebble-root.pem; https_ready",
+            "fixture",
+            HOST,
+            check=False,
+        ).returncode
+        == 0
+    )
+
+
 def check_transition(legacy):
     assert SITE.is_file()
+    assert https_ready() != legacy
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
     origin = "http://127.0.0.1:3000" if legacy else "http://127.0.0.2:983"
     assert api(opener, "/api/health", origin=origin)[0] == 200

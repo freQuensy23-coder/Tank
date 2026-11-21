@@ -39,7 +39,7 @@ def test_rollout_selects_one_ingress_and_recovers_historical_release(tmp_path, o
   case "$1" in
     compose)
       printf '%s %s\\n' "$TANK_VERSION" "$*" >> calls
-      case "$*" in *' port grafana 3000') echo 127.0.0.1:13000 ;; esac ;;
+      case "$*" in *'/nginx/compose.yaml port grafana 3000') echo 127.0.0.2:983 ;; *' port grafana 3000') echo 127.0.0.1:13000 ;; esac ;;
     ps) : ;;
     exec) echo 1 ;;
     *) return 1 ;;

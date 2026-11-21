@@ -23,7 +23,7 @@ shared_nginx() {
 }
 
 dedicated_https() {
-  [ -z "$external_host" ] && [ -f "releases/$1/stack/deploy/grafana/https/compose.yaml" ]
+  [ "$machine" = oracle-vps ] && [ -z "$external_host" ] && [ -f "releases/$1/stack/deploy/grafana/https/compose.yaml" ]
 }
 
 preflight_release() {
@@ -71,14 +71,17 @@ remove_service() {
 grafana_ready() {
   local address
   address=$(compose "$1" port grafana 3000) || return 1
+  if shared_nginx "$1" && [[ $address != 127.0.0.2:983 ]]; then return 1; fi
   python3 grafana.py ready "$address" "releases/$1/stack/deploy/grafana/dashboards"
 }
 
 https_ready() {
-  local host=${external_host:-grafana.84-235-183-96.sslip.io} path expected status
+  local host=${external_host:-grafana.84-235-183-96.sslip.io} path expected status format='%{http_code}'
+  if [[ -n $external_host ]]; then format+=':%header{x-tank-route}'; fi
   for path in /login /api/dashboards/uid/tank-queue /api/dashboards/uid/tank-pipeline; do
     expected=401; [ "$path" != /login ] || expected=200
-    status=$(curl -q --noproxy '*' --resolve "$host:443:127.0.0.1" --max-time 4 -s -o /dev/null -w '%{http_code}' "https://$host$path") || return 1
+    if [[ -n $external_host ]]; then expected+=:grafana; fi
+    status=$(curl -q --noproxy '*' --resolve "$host:443:127.0.0.1" --max-time 4 -s -o /dev/null -w "$format" "https://$host$path") || return 1
     [ "$status" = "$expected" ] || return 1
   done
 }
@@ -217,12 +220,13 @@ trap 'exit 130' INT
 trap 'exit 143' TERM
 preflight_release "$SHA"
 if [ -n "$previous" ]; then preflight_release "$previous"; fi
+machine=$(hostname -s)
 site=/etc/nginx/sites-enabled/zzzz-tank-grafana
 if [[ -f $site ]]; then
   external_host=$(awk '$1 == "server_name" { sub(/;$/, "", $2); print $2; exit }' "$site")
   [[ $external_host =~ ^grafana\.([0-9]{1,3}-){3}[0-9]{1,3}\.sslip\.io$ ]] || { echo 'Invalid Nexus Grafana site'; exit 1; }
   export GRAFANA_EXTERNAL_HOST=$external_host
-elif { dedicated_https "$SHA" || dedicated_https "$previous"; } && [[ $(hostname -s) != oracle-vps ]]; then
+elif [[ $machine != oracle-vps && -f releases/$SHA/stack/deploy/grafana/nginx/compose.yaml ]]; then
   echo 'Provision the Nexus Grafana site before deploying alongside nginx'; exit 1
 fi
 if [ -n "$previous" ] && grafana_enabled "$previous"; then
