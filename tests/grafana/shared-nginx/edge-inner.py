@@ -241,6 +241,9 @@ server {
     setup_viewer()
     viewer = viewer_session()
     run("bash", HELPER, HOST)
+    collision.write_text(f"server {{ listen 80; server_name {HOST}; }}\n")
+    assert run("bash", HELPER, HOST, check=False).returncode != 0
+    collision.unlink()
     SITE.unlink()
     run("bash", HELPER, HOST)
     assert SITE.is_symlink() and serial() == first

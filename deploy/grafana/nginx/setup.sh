@@ -13,9 +13,12 @@ if [[ -L $site || -e $site ]] && ! { [[ -f $site && ! -L $site ]] && cmp -s "$ca
 fi
 systemctl is-active --quiet certbot.timer
 systemctl is-enabled --quiet certbot.timer
+reload_site() {
+  nginx -t 2>&1 | awk -v conflict="conflicting server name \"$host\"" 'index($0, conflict) { found=1 } END { exit found }' && systemctl reload nginx
+}
 if [[ -e $enabled || -L $enabled ]]; then
   [[ $(readlink "$enabled") == "$site" && -f $site ]] || { echo 'Unowned nginx site'; exit 1; }
-  nginx -t >/dev/null 2>&1 && systemctl reload nginx
+  reload_site
   exit $?
 fi
 if [[ ! -f $site && ( -e /etc/letsencrypt/renewal/$host.conf || -e /etc/letsencrypt/live/$host ) ]]; then
@@ -30,7 +33,7 @@ if [[ ! -e $site ]]; then
   ln "$candidate" "$site"
 fi
 ln -s "$site" "$enabled"
-if nginx -t >/dev/null 2>&1 && systemctl reload nginx; then exit 0; fi
+if reload_site; then exit 0; fi
 rm "$enabled"
 nginx -t >/dev/null 2>&1 && systemctl reload nginx
 echo 'Grafana site activation failed; the system certificate was retained' >&2; exit 1
