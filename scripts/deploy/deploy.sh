@@ -16,6 +16,7 @@ grafana_enabled() {
   [ -f "releases/$1/stack/deploy/grafana/production-version" ]
 }
 
+machine=''
 external_host=''
 
 shared_nginx() {
@@ -221,7 +222,7 @@ trap 'exit 143' TERM
 preflight_release "$SHA"
 if [ -n "$previous" ]; then preflight_release "$previous"; fi
 machine=$(hostname -s)
-site=/etc/nginx/sites-enabled/zzzz-tank-grafana
+site=/etc/nginx/sites-available/zzzz-tank-grafana
 if [[ -f $site ]]; then
   external_host=$(awk '$1 == "server_name" { sub(/;$/, "", $2); print $2; exit }' "$site")
   [[ $external_host =~ ^grafana\.([0-9]{1,3}-){3}[0-9]{1,3}\.sslip\.io$ ]] || { echo 'Invalid Nexus Grafana site'; exit 1; }

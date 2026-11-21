@@ -145,6 +145,7 @@ def main():
     if not Path("/.dockerenv").is_file() or not Path(HELPER).is_file():
         raise SystemExit("Use edge-run.py with its disposable fixture container")
     SITE.parent.mkdir(exist_ok=True)
+    Path("/etc/nginx/sites-available").mkdir(exist_ok=True)
     Path("/var/www/html").mkdir(parents=True, exist_ok=True)
     Path("/etc/nginx/conf.d/fixture.conf").write_text("include /etc/nginx/sites-enabled/*;\n")
     systemctl = Path("/usr/local/bin/systemctl")
@@ -220,6 +221,9 @@ server {
     collision = Path("/etc/nginx/conf.d/duplicate.conf")
     collision.write_text(f"server {{ listen 80; server_name {HOST}; }}\n")
     lineage = Path(f"/etc/letsencrypt/renewal/{HOST}.conf")
+    assert run("bash", HELPER, HOST, check=False).returncode != 0
+    assert not SITE.exists() and not lineage.exists()
+    collision.write_text("server { listen 80; server_name *.sslip.io; }\n")
     assert run("bash", HELPER, HOST, check=False).returncode != 0
     assert not SITE.exists() and not lineage.exists()
     collision.unlink()

@@ -62,7 +62,7 @@ verify() { return 1; }
     if override:
         enabled.mkdir()
         site.write_text(f"server_name {HOST};\n")
-    script = script.replace(marker, hooks + marker).replace("/etc/nginx/sites-enabled", str(enabled))
+    script = script.replace(marker, hooks + marker).replace("/etc/nginx/sites-available", str(enabled))
     (tmp_path / "deploy.sh").write_text(script)
     result = subprocess.run(
         ["bash", "deploy.sh", NEW],
