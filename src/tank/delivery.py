@@ -144,7 +144,10 @@ class DeliveryService:
 
             async with AsyncExitStack() as locks:
                 await self._enter_delivery_lock(locks, "event:" + rows[0]["event_id"])
+                await self._resume_card_settlement(rows[0]["event_id"], job.subject)
                 error = await self._deliver(job)
+        if isinstance(error, asyncio.CancelledError):
+            raise error
         if isinstance(error, DeliveryError):
             if getattr(error, "terminal", False):
                 await self.terminal_failure(payload, error, 5)
@@ -567,100 +570,130 @@ class DeliveryService:
                         {**proposal, "ops_chat_id": str(chat), "ops_message_id": message_ref},
                     )
                 if not notice:
-                    await event_progress(
-                        self.repo,
-                        self.settings,
-                        record["event_id"],
-                        "ALERT_SENT",
-                        f"Карточка {subject}; Telegram message_id={message_ref}",
-                        key=subject,
-                    )
-                    if record.get("kind") == "PRELIMINARY":
-                        event = await self.repo.get("evt.events", record["event_id"])
-                        if (
-                            event
-                            and event.get("lifecycle") == "INVALIDATED"
-                            and record.get("terminal_correction")
-                        ):
-                            await self._finalize_invalidated(event, record)
-                        return None
-                    await self._activate_calls(record, sent_at)
-                    event = await self.repo.get("evt.events", record["event_id"])
-                    if event and not event.get("first_card_delivered_at"):
-                        delivered = utcnow()
-                        event.update(
-                            **collection_clock(delivered).fields("first_card_delivered_at"),
-                            first_card_latency_s=(
-                                delivered - parse_time(event["known_to_us_at"])
-                            ).total_seconds()
-                            if event.get("known_to_us_at")
-                            else None,
-                        )
-                        assessment = (record.get("card_struct") or {}).get("assessment") or {}
-                        if (
-                            assessment.get("class") == "STRUCTURAL_SHOCK"
-                            and event.get("known_to_us_at")
-                            and not event.get("first_card_deadline")
-                        ):
-                            event.update(
-                                offset_schedule(
-                                    propagate_timestamp(event, "known_to_us_at"), timedelta(minutes=3)
-                                ).fields("first_card_deadline")
-                            )
-                        if event.get("first_card_deadline"):
-                            event["first_card_deadline_met"] = delivered <= parse_time(
-                                event["first_card_deadline"]
-                            )
-                        await self.repo.put("evt.events", event["event_id"], event)
-                    if event and event.get("lifecycle") in ("ANALYZING", "ALERTED"):
+                    try:
+                        async with self.repo.transaction():
+                            await self._settle_card(record, sent_at, subject, message_ref)
+                    except (Exception, asyncio.CancelledError) as exc:
+                        checkpoint = "delivery-settlement:" + record["event_id"]
                         await self.repo.put(
-                            "evt.events",
-                            event["event_id"],
+                            "ops.scheduler_checkpoints",
+                            checkpoint,
                             {
-                                **event,
-                                "lifecycle": "ALERTED",
-                                **collection_clock(utcnow()).fields("alerted_at"),
+                                "checkpoint_id": checkpoint,
+                                **sent_at.fields("at"),
+                                "state": {
+                                    **filters,
+                                    "message_ref": message_ref,
+                                    "error_type": type(exc).__name__,
+                                },
                             },
                         )
-                    if (
-                        event
-                        and event.get("lifecycle") == "INVALIDATED"
-                        and record.get("terminal_correction")
-                    ):
-                        open_calls = await self._all(
-                            "ana.calls", filters={"event_id": event["event_id"], "status": "OPEN"}
-                        )
-                        if not open_calls:
-                            await self._finalize_invalidated(event, record)
-                if not notice and record.get("milestone_resolution_id"):
-                    event = await self.repo.get("evt.events", record["event_id"])
-                    if event and event.get("milestone_resolution_id") == record["milestone_resolution_id"]:
-                        await self.repo.put(
-                            "evt.events", event["event_id"], {**event, "milestone_resolved": False}
-                        )
-                if not notice:
-                    expired_ids = (
-                        record.get("expired_call_ids")
-                        or record.get("call_expired_ids")
-                        or ((record.get("card_struct") or {}).get("event") or {}).get("call_expired_ids")
-                        or []
+                        if isinstance(exc, asyncio.CancelledError):
+                            return exc
+                        return DeliveryError("Confirmed Telegram card awaits bookkeeping")
+
+    async def _resume_card_settlement(self, event_id, requested_subject):
+        key = "delivery-settlement:" + event_id
+        pending = await self.repo.get("ops.scheduler_checkpoints", key)
+        if pending:
+            state = pending["state"]
+            subject = f"{state['alert_id']}:{state['version']}"
+            record = await self.repo.get("out.alerts", subject)
+            if not record or record["event_id"] != event_id:
+                raise ValueError("Pending delivery settlement has no matching card")
+            try:
+                async with self.repo.transaction():
+                    await self._settle_card(
+                        record, propagate_timestamp(pending, "at"), subject, state["message_ref"]
                     )
-                    if expired_ids:
-                        event = await self.repo.get("evt.events", record["event_id"])
-                        remaining = sorted(set(event.get("call_expired_ids", [])) - set(expired_ids))
-                        await self.repo.put(
-                            "evt.events",
-                            event["event_id"],
-                            {
-                                **event,
-                                "call_expired": bool(remaining),
-                                "call_expired_ids": remaining,
-                                "expiry_notices_sent": sorted(
-                                    set(event.get("expiry_notices_sent", [])) | set(expired_ids)
-                                ),
-                                **collection_clock(utcnow()).fields("last_expiry_notice_at"),
-                            },
-                        )
+                    await self.repo.delete("ops.scheduler_checkpoints", key)
+            except Exception:
+                if subject != requested_subject:
+                    raise DeliveryDeferred(
+                        offset_schedule(collection_clock(), timedelta(seconds=5))
+                    ) from None
+                raise
+
+    async def _settle_card(self, record, sent_at, subject, message_ref):
+        await event_progress(
+            self.repo,
+            self.settings,
+            record["event_id"],
+            "ALERT_SENT",
+            f"Карточка {subject}; Telegram message_id={message_ref}",
+            key=subject,
+        )
+        if record.get("kind") == "PRELIMINARY":
+            event = await self.repo.get("evt.events", record["event_id"])
+            if event and event.get("lifecycle") == "INVALIDATED" and record.get("terminal_correction"):
+                await self._finalize_invalidated(event, record)
+            return None
+        await self._activate_calls(record, sent_at)
+        event = await self.repo.get("evt.events", record["event_id"])
+        if event and not event.get("first_card_delivered_at"):
+            delivered = parse_time(sent_at.value)
+            event.update(
+                **collection_clock(delivered).fields("first_card_delivered_at"),
+                first_card_latency_s=(delivered - parse_time(event["known_to_us_at"])).total_seconds()
+                if event.get("known_to_us_at")
+                else None,
+            )
+            assessment = (record.get("card_struct") or {}).get("assessment") or {}
+            if (
+                assessment.get("class") == "STRUCTURAL_SHOCK"
+                and event.get("known_to_us_at")
+                and not event.get("first_card_deadline")
+            ):
+                event.update(
+                    offset_schedule(
+                        propagate_timestamp(event, "known_to_us_at"), timedelta(minutes=3)
+                    ).fields("first_card_deadline")
+                )
+            if event.get("first_card_deadline"):
+                event["first_card_deadline_met"] = delivered <= parse_time(event["first_card_deadline"])
+            await self.repo.put("evt.events", event["event_id"], event)
+        if event and event.get("lifecycle") in ("ANALYZING", "ALERTED"):
+            await self.repo.put(
+                "evt.events",
+                event["event_id"],
+                {
+                    **event,
+                    "lifecycle": "ALERTED",
+                    **collection_clock(utcnow()).fields("alerted_at"),
+                },
+            )
+        if event and event.get("lifecycle") == "INVALIDATED" and record.get("terminal_correction"):
+            open_calls = await self._all(
+                "ana.calls", filters={"event_id": event["event_id"], "status": "OPEN"}
+            )
+            if not open_calls:
+                await self._finalize_invalidated(event, record)
+        if record.get("milestone_resolution_id"):
+            event = await self.repo.get("evt.events", record["event_id"])
+            if event and event.get("milestone_resolution_id") == record["milestone_resolution_id"]:
+                await self.repo.put("evt.events", event["event_id"], {**event, "milestone_resolved": False})
+        expired_ids = (
+            record.get("expired_call_ids")
+            or record.get("call_expired_ids")
+            or ((record.get("card_struct") or {}).get("event") or {}).get("call_expired_ids")
+            or []
+        )
+        if expired_ids:
+            event = await self.repo.get("evt.events", record["event_id"])
+            remaining = sorted(set(event.get("call_expired_ids", [])) - set(expired_ids))
+            await self.repo.put(
+                "evt.events",
+                event["event_id"],
+                {
+                    **event,
+                    "call_expired": bool(remaining),
+                    "call_expired_ids": remaining,
+                    "expiry_notices_sent": sorted(
+                        set(event.get("expiry_notices_sent", [])) | set(expired_ids)
+                    ),
+                    **collection_clock(utcnow()).fields("last_expiry_notice_at"),
+                },
+            )
 
     async def _finalize_invalidated(self, event, record):
         """The delivered denial correction lets the invalidated event's session finish."""
