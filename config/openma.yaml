@@ -20,4 +20,4 @@ model_access: CHATGPT_SUBSCRIPTION_CODEX_OAUTH
 gateway_base_url: http://tank:8790/v1
 model_card_provider: tank-codex
 openma_overlay: tank-canonical-5dd1d3495f79bc203f9d0ea5a2320e148cf7a963b4709fe06dad0ac62430d296
-max_running_sessions: 2
+max_running_sessions: 1
