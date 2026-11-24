@@ -434,7 +434,7 @@
           "rawQuery": true,
           "editorMode": "code",
           "format": "time_series",
-          "rawSql": "SELECT $__timeGroupAlias(scheduled_at, '5m'),\n       count(*) FILTER (WHERE status = 'DONE') AS \"DONE\",\n       count(*) FILTER (WHERE status = 'FAILED') AS \"FAILED\",\n       count(*) FILTER (WHERE status = 'EXPIRED') AS \"EXPIRED\",\n       count(*) FILTER (WHERE status = 'QUEUED') AS \"QUEUED\",\n       count(*) FILTER (WHERE status = 'RUNNING') AS \"RUNNING\"\nFROM tank_metrics.minute_condition_checks\nWHERE scheduled_at >= $__timeFrom() AND scheduled_at < $__timeTo()\nGROUP BY 1 ORDER BY 1"
+          "rawSql": "WITH bounds AS (\n  SELECT ($__timeFrom()::timestamptz AT TIME ZONE 'UTC') - interval '1 minute' AS key_from,\n         $__timeTo()::timestamptz AT TIME ZONE 'UTC' AS key_to\n)\nSELECT $__timeGroupAlias(scheduled_at, '5m'),\n       count(*) FILTER (WHERE status = 'DONE') AS \"DONE\",\n       count(*) FILTER (WHERE status = 'FAILED') AS \"FAILED\",\n       count(*) FILTER (WHERE status = 'EXPIRED') AS \"EXPIRED\",\n       count(*) FILTER (WHERE status = 'QUEUED') AS \"QUEUED\",\n       count(*) FILTER (WHERE status = 'RUNNING') AS \"RUNNING\"\nFROM tank_metrics.minute_condition_checks_by_cutoff CROSS JOIN bounds\nWHERE cutoff_key >= CASE WHEN extract(year FROM key_from) BETWEEN 1 AND 9999\n        THEN to_char(key_from, 'YYYY-MM-DD\"T\"HH24:MI\":00Z\"') ELSE '0000-00-00T00:00:00Z' END\n  AND cutoff_key <= CASE WHEN extract(year FROM key_to) BETWEEN 1 AND 9999\n        THEN to_char(key_to, 'YYYY-MM-DD\"T\"HH24:MI\":00Z\"') ELSE '9999-99-99T99:99:00Z' END\n  AND scheduled_at >= $__timeFrom() AND scheduled_at < $__timeTo()\nGROUP BY 1 ORDER BY 1"
         }
       ],
       "fieldConfig": {

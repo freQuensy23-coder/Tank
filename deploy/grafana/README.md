@@ -36,6 +36,10 @@ The infrastructure owner can recover the initial `admin` credential from `GRAFAN
 
 A failed rollout returns to the previous recorded Tank release. For a Grafana-enabled release it uses that release's files, reinstalls its views and checks Grafana. Only `deploy/grafana/production-version` with version `1` enables the production overlay. A release without the marker (even one with a local `compose.grafana.yaml`) removes the Grafana container and reinstates its original Postgres HBA via the previous image. A release without the HTTPS overlay first removes the public proxy, including on rollback to loopback-only Grafana. Neither path drops database objects, deletes `pg-data`, or changes passwords. To deliberately select a prior release, use the same Deploy action with its `main` commit SHA. Future Grafana major upgrades or incompatible metric view changes need an explicit database backup and compatibility plan; selecting an older image is not a database downgrade.
 
+## Minute-condition panel
+
+The panel narrows the scan with the existing `(type, idem_key)` index over UTC cutoff keys, then applies the exact half-open timestamp range. The key range starts one minute early so PostgreSQL's accepted `24:00` spelling of midnight is not lost. The original two-column metrics view remains compatible with older releases and readers.
+
 ## HEL HTTPS staging
 
 The [HEL recipe](staging/hel/README.md) serves both dashboards to named Viewers over publicly trusted HTTPS without SSH. It is a temporary, isolated **synthetic** preview. The production Deploy workflow never installs its nginx site, fixture or staging credentials.

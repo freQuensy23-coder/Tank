@@ -252,15 +252,37 @@ resolve_url
 [[ $("${pg[@]}" -c "$store_check") == 1 ]]
 "${http[@]}" "$base/api/user" | jq -ec 'select(.login == "admin" and .name == "Persistence check") | {login,name}'
 "${pg[@]}" -f - < "$tests/seeds/minute-checks.sql"
-"${http[@]}" "$base/api/dashboards/uid/tank-pipeline" |
-    jq -ce '[.dashboard.panels[] | select(.id == 34 and .type == "timeseries")] |
+"${pg[@]}" -f - < "$tests/seeds/minute-check-history.sql"
+"${http[@]}" "$base/api/dashboards/uid/tank-pipeline" > "$tmp/pipeline-b"
+check_minute_panel() {
+    local start=$1 end=$2 expected=$3
+    jq -ce --arg start "$start" --arg end "$end" '[.dashboard.panels[] | select(.id == 34 and .type == "timeseries")] |
         if length == 1 and (.[0].targets | length > 0) then
-        {from:"1767225600000",to:"1767226320000",queries:.[0].targets} else error("missing minute-check target") end' > "$tmp/minute-request"
-"${http[@]}" -H 'Content-Type: application/json' --data-binary "@$tmp/minute-request" "$base/api/ds/query" |
-    jq -ec '.results.A | select(.error == null and (.frames | length == 1)) | .frames[0] |
+        {from:$start,to:$end,queries:.[0].targets} else error("missing minute-check target") end' "$tmp/pipeline-b" > "$tmp/minute-request"
+    "${http[@]}" -H 'Content-Type: application/json' --data-binary "@$tmp/minute-request" "$base/api/ds/query" > "$tmp/minute-result"
+    jq -ec --argjson expected "$expected" '.results.A | select(.error == null and (.frames | length == 1)) | .frames[0] |
         .data.values as $values | [.schema.fields | to_entries[] | {key:.value.name,value:$values[.key]}] | from_entries |
         select((.Time // .time) == [1767225600000,1767226200000]) | del(.Time,.time) |
-        select(. == {DONE:[2,0],FAILED:[1,0],EXPIRED:[1,1],QUEUED:[1,0],RUNNING:[0,1]})'
+        select(. == $expected)' "$tmp/minute-result"
+}
+check_minute_panel 1767225600000 1767226320000 '{"DONE":[3,0],"FAILED":[1,0],"EXPIRED":[1,1],"QUEUED":[1,0],"RUNNING":[0,1]}'
+check_minute_panel 1767225600001 1767226200001 '{"DONE":[1,0],"FAILED":[1,0],"EXPIRED":[1,0],"QUEUED":[1,0],"RUNNING":[0,1]}'
+minute_sql=$(jq -er '.results.A.frames[0].schema.meta.executedQueryString | strings | select(length > 0)' "$tmp/minute-result")
+for zone in UTC Pacific/Auckland; do
+    printf 'SET ROLE tank_grafana_reader;\nSET TIME ZONE '\''%s'\'';\n%s;\n' "$zone" "$minute_sql" |
+        "${pg[@]}" -f - > "$tmp/minute-${zone##*/}"
+done
+[[ -s $tmp/minute-UTC ]]
+cmp "$tmp/minute-UTC" "$tmp/minute-Auckland"
+printf 'SET ROLE tank_grafana_reader;\nSET TIME ZONE '\''Pacific/Auckland'\'';\nEXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) %s;\n' "$minute_sql" |
+    "${pg[@]}" -f - |
+    jq -ec '[.. | objects | select(."Index Name" == "jobs_type_idem_key_key") | ."Index Cond" |
+        select(contains("idem_key >=") and contains("idem_key <="))] | select(length == 1) | .[0]'
+[[ $minute_sql == *2026-01-01T00:00:00.001Z* && $minute_sql == *2026-01-01T00:10:00.001Z* ]]
+first_year_sql=${minute_sql//2026-01-01T00:00:00.001Z/0001-01-01T00:00:30Z}
+first_year_sql=${first_year_sql//2026-01-01T00:10:00.001Z/0001-01-01T00:02:00Z}
+first_year=$(printf 'SET ROLE tank_grafana_reader;\n%s;\n' "$first_year_sql" | "${pg[@]}" -f -)
+[[ $first_year == '-62135596800|1|0|0|0|0' ]]
 printf 'Grafana container replaced; admin and provisioned datasource retained in PostgreSQL.\n'
 assert_b() {
     resolve_url
