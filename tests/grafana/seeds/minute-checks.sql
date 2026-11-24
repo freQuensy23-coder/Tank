@@ -24,4 +24,11 @@ SELECT id, id, kind, 2, key_prefix || stamp, state, attempts, 2,
             WHEN state IN ('DONE', 'FAILED') THEN cutoff + interval '2 minutes' END,
        jsonb_build_object('payload', jsonb_build_object('cutoff', stamp, 'cutoff_prec', precision)) ||
        CASE WHEN minute = 0 THEN '{"result":{"deferred":[{"reason":"BATCH_BUDGET"}]}}'::jsonb ELSE '{}'::jsonb END
-FROM jobs;
+FROM jobs
+UNION ALL
+SELECT 'minute-fixture-' || id, 'minute-fixture-' || id, 'EVAL_CONDITIONS', 2, stamp, 'DONE', 1, 2,
+       '2026-01-01 00:02Z'::timestamptz, '2026-01-01 00:02Z'::timestamptz,
+       '2026-01-01 00:06Z'::timestamptz, '2026-01-01 00:03Z'::timestamptz,
+       jsonb_build_object('payload', jsonb_build_object('cutoff', stamp, 'cutoff_prec', 'BUCKET(1m)'))
+FROM (VALUES ('midnight', '2025-12-31T24:00:00Z'), ('invalid', '2026-01-01T00:09:00Z-invalid'),
+             ('invalid-time', '2025-12-31T24:01:00Z'), ('first-year', '0001-01-01T00:01:00Z')) AS edge(id, stamp);
