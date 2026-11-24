@@ -1,0 +1,42 @@
+#!/bin/sh
+set -eu
+psql() { command psql -X -w -U postgres --set ON_ERROR_STOP=1 "$@"; }
+
+psql -d postgres <<'SQL'
+BEGIN;
+DO $$
+BEGIN
+    IF to_regrole('tank_backup') IS NULL THEN
+        CREATE ROLE tank_backup LOGIN CONNECTION LIMIT 2;
+        COMMENT ON ROLE tank_backup IS 'Tank backup deployment v1';
+    ELSIF shobj_description(to_regrole('tank_backup'), 'pg_authid') IS DISTINCT FROM 'Tank backup deployment v1' THEN
+        RAISE EXCEPTION 'Refusing to adopt existing tank_backup role';
+    END IF;
+END
+$$;
+ALTER ROLE tank_backup LOGIN NOSUPERUSER INHERIT NOCREATEROLE NOCREATEDB NOREPLICATION NOBYPASSRLS CONNECTION LIMIT 2 PASSWORD NULL;
+ALTER ROLE tank_backup SET default_transaction_read_only = on;
+GRANT CONNECT ON DATABASE tank, oma TO tank_backup;
+COMMIT;
+SQL
+
+for db in tank oma; do
+    psql -d "$db" --set application_owner="$db" <<'SQL'
+BEGIN;
+SET LOCAL search_path = pg_catalog;
+SELECT format('GRANT USAGE ON SCHEMA %I TO tank_backup', nspname),
+       format('GRANT SELECT ON ALL TABLES IN SCHEMA %I TO tank_backup', nspname),
+       format('GRANT SELECT ON ALL SEQUENCES IN SCHEMA %I TO tank_backup', nspname)
+FROM pg_namespace
+WHERE nspname !~ '^pg_' AND nspname <> 'information_schema'
+\gexec
+
+SELECT format('ALTER DEFAULT PRIVILEGES FOR ROLE %I GRANT %s TO tank_backup', rolname, privilege)
+FROM pg_roles
+CROSS JOIN (VALUES ('USAGE ON SCHEMAS'), ('SELECT ON TABLES'), ('SELECT ON SEQUENCES')) AS grants(privilege)
+WHERE rolname = :'application_owner'
+   OR (current_database() = 'tank' AND rolname = 'tank_grafana_store')
+\gexec
+COMMIT;
+SQL
+done

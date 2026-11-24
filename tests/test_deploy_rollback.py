@@ -98,6 +98,84 @@ def test_grafana_preflight_refuses_before_provider_or_rollout(tmp_path, invalid)
         assert not calls.exists()
 
 
+@pytest.mark.parametrize("variant", ["base", "grafana", "historical", "provision-fails"])
+def test_roll_provisions_backup_and_defers_activation_until_verification(tmp_path, variant):
+    source = (Path(__file__).parents[1] / "scripts/deploy/deploy.sh").read_text()
+    roll = source[source.index("quiesce_legacy_backup() {") : source.index("\nverify() {")]
+    harness = """
+compose() {
+  shift
+  printf '%s\\n' "$*" >> calls
+  case "$*" in
+    'config --services')
+      if [[ $VARIANT != historical ]]; then echo tank-backup; fi
+      if [[ $VARIANT == grafana ]]; then echo grafana; fi
+      ;;
+    'exec -T -u postgres postgres provision-tank-backup') [[ $VARIANT != provision-fails ]]; return ;;
+  esac
+  return 0
+}
+remove_service() { printf 'remove %s\\n' "$1" >> calls; }
+start_backend() { printf 'start %s\\n' "$2" >> calls; }
+healthy() { printf 'healthy %s\\n' "$1" >> calls; }
+grafana_enabled() { [[ $VARIANT == grafana ]]; }
+start_grafana() { printf 'start grafana\\n' >> calls; }
+dedicated_https() { return 1; }
+docker() {
+  case "$*" in
+    'ps -q --filter label=com.docker.compose.project=tank --filter label=com.docker.compose.service=tank')
+      echo tank-core ;;
+    'inspect -f '*tank-core)
+      if [[ $VARIANT == grafana ]]; then echo writable-backup; fi ;;
+    'stop -t 20 tank-core') printf 'stop legacy core\\n' >> calls ;;
+  esac
+  return 0
+}
+nsenter() { return 1; }
+sleep() { :; }
+"""
+    result = subprocess.run(
+        [
+            "bash",
+            "-c",
+            harness + roll + '\nroll "$1" && { printf "verified\\n" >> calls; start_backup "$1"; }',
+            "bash",
+            CANDIDATE,
+        ],
+        cwd=tmp_path,
+        env={**os.environ, "VARIANT": variant},
+        capture_output=True,
+        text=True,
+        timeout=4,
+    )
+    calls = (tmp_path / "calls").read_text().splitlines()
+    provision = "exec -T -u postgres postgres provision-tank-backup"
+    start_backup = "up -d --no-deps --wait --wait-timeout 30 tank-backup"
+    assert calls.index("remove tank-backup") < calls.index("start postgres")
+    if variant == "historical":
+        assert result.returncode == 0
+        assert provision not in calls and start_backup not in calls
+    elif variant == "provision-fails":
+        assert result.returncode != 0 and calls[-1] == provision
+    else:
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert (
+            calls.index("healthy tank-postgres-1")
+            < calls.index(provision)
+            < calls.index("start openma")
+            < calls.index("verified")
+            < len(calls) - calls[::-1].index(provision) - 1
+            < calls.index(start_backup)
+        )
+        assert calls.count(provision) == 2
+        if variant == "grafana":
+            assert calls.index("stop legacy core") < calls.index("start postgres")
+            assert calls.index("start grafana") < calls.index("verified")
+        else:
+            assert "stop legacy core" not in calls
+            assert "start grafana" not in calls
+
+
 def test_historical_target_uses_current_main_deployment_helper(tmp_path):
     root = Path(__file__).parents[1]
     workflow = yaml.safe_load((root / ".github/workflows/deploy.yml").read_text())

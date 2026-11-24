@@ -253,6 +253,8 @@ class Settings(BaseSettings):
     replay: bool = False
     capture_only: bool = False
     backup_dir: Path | None = None
+    backup_delegated: bool = False
+    backup_postgres_socket: Path | None = None
     logs_dir: Path | None = None
     backup_hour_utc: int = 2
     market_retention_days: int = 90

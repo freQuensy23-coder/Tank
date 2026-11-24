@@ -151,11 +151,31 @@ def test_manual_backup_defaults_to_no_retention_and_forwards_force(monkeypatch):
             return {"status": "created"}
 
     monkeypatch.setattr(tank.scheduler, "Scheduler", Scheduler)
-    monkeypatch.setattr(cli, "run_db", lambda fn: asyncio.run(fn(None, None)))
+    monkeypatch.setattr(cli, "run_db", lambda fn: asyncio.run(fn(None, cli.Settings())))
     assert CliRunner().invoke(cli.main, ["backup", "--force"]).exit_code == 0
     assert calls[-1] == {"force": True, "prune": False}
     assert CliRunner().invoke(cli.main, ["backup", "--prune"]).exit_code == 0
     assert calls[-1] == {"force": False, "prune": True}
+
+
+def test_manual_backup_in_delegated_runtime_refuses_before_maintenance(monkeypatch):
+    from click.testing import CliRunner
+
+    import tank.scheduler
+    from tank import cli
+
+    def forbidden(*args):
+        pytest.fail("Delegated runtime must not start backup maintenance")
+
+    def run_db(command):
+        return asyncio.run(command(None, cli.Settings(backup_delegated=True)))
+
+    monkeypatch.setattr(tank.scheduler, "Scheduler", forbidden)
+    monkeypatch.setattr(cli, "run_db", run_db)
+    result = CliRunner().invoke(cli.main, ["backup", "--force"])
+    assert result.exit_code == 1
+    assert isinstance(result.exception, ValueError)
+    assert str(result.exception) == "Run backups in the tank-backup service"
 
 
 @pytest.mark.asyncio

@@ -5,12 +5,38 @@ keep the last `backup_snapshots_kept` verified snapshots (3 while the backup sha
 the production disk, 7 once it has its own disk).
 """
 
+import os
 import re
 import shutil
 from os import PathLike
 from pathlib import Path
+from urllib.parse import unquote, urlsplit
 
 SNAPSHOT = re.compile(r"tank-\d{4}-\d{2}-\d{2}")
+
+
+def dump_environment(url: str, database: str, socket: Path | None) -> dict[str, str]:
+    if socket is not None:
+        return {
+            "PATH": os.environ.get("PATH", os.defpath),
+            "PGHOST": str(socket),
+            "PGUSER": "tank_backup",
+            "PGDATABASE": database,
+        }
+    connection = urlsplit(url)
+    env = os.environ.copy()
+    for key, value in {
+        "PGHOST": connection.hostname,
+        "PGPORT": connection.port,
+        "PGUSER": unquote(connection.username or ""),
+        "PGPASSWORD": unquote(connection.password or ""),
+        "PGDATABASE": unquote(connection.path.lstrip("/")),
+    }.items():
+        if value:
+            env[key] = str(value)
+        else:
+            env.pop(key, None)
+    return env
 
 
 def prune_backup_snapshots(target: str | PathLike[str], keep: int) -> list[str]:

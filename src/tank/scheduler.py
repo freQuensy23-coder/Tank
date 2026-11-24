@@ -222,7 +222,8 @@ class Scheduler:
         heartbeat_hour, heartbeat_minute = map(int, str(self.threshold("heartbeat_utc", "08:00")).split(":"))
         if (now.hour, now.minute) >= (heartbeat_hour, heartbeat_minute):
             await self.heartbeat(now)
-        self.launch("backup", lambda: self.maintenance(now))
+        if not getattr(self.settings, "backup_delegated", False):
+            self.launch("backup", lambda: self.maintenance(now))
 
     async def ensure_reactions(self, event, *, now=None):
         """Open the pack outside the analyst transaction; only POST windows are jobs.
@@ -1925,10 +1926,8 @@ class Scheduler:
         return (str(directory), day, identity("manifest.json"), identity("COMPLETE"))
 
     async def maintenance(self, now, *, force=False, prune=True):
-        import os
-        import shutil
+        import fcntl
         from pathlib import Path
-        from urllib.parse import unquote, urlsplit
 
         backup_dir = getattr(self.settings, "backup_dir", None)
         if backup_dir is None:
@@ -1938,6 +1937,19 @@ class Scheduler:
         target = Path(backup_dir)
         if not target.is_dir():
             raise ValueError("Configured external backup directory is unavailable")
+        with (target / ".backup.lock").open("a") as lock:
+            try:
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                return {"status": "deferred", "reason": "backup already running"}
+            return await self._maintenance(now, target, force=force, prune=prune)
+
+    async def _maintenance(self, now, target, *, force, prune):
+        import shutil
+        from pathlib import Path
+
+        from tank.backup import dump_environment
+
         final = target / f"tank-{now.date()}"
         cache_key = self.backup_identity(final, now.date())
         self._verified_backups = {
@@ -1958,26 +1970,14 @@ class Scheduler:
         staging.mkdir(exist_ok=True)
         import json
 
-        async def dump_database(url, name):
-            connection = urlsplit(url)
-            env = os.environ.copy()
-            for key, value in {
-                "PGHOST": connection.hostname,
-                "PGPORT": connection.port,
-                "PGUSER": unquote(connection.username or ""),
-                "PGPASSWORD": unquote(connection.password or ""),
-                "PGDATABASE": unquote(connection.path.lstrip("/")),
-            }.items():
-                if value:
-                    env[key] = str(value)
-                else:
-                    env.pop(key, None)
+        async def dump_database(url, database):
             proc = await asyncio.create_subprocess_exec(
                 "pg_dump",
+                "--no-password",
                 "--format=custom",
                 "--file",
-                str(staging / name),
-                env=env,
+                str(staging / f"{database}.dump"),
+                env=dump_environment(url, database, getattr(self.settings, "backup_postgres_socket", None)),
                 stdout=asyncio.subprocess.DEVNULL,
                 stderr=asyncio.subprocess.PIPE,
             )
@@ -1991,8 +1991,8 @@ class Scheduler:
             if proc.returncode:
                 raise RuntimeError(f"Nightly pg_dump failed with status {proc.returncode}")
 
-        await dump_database(self.settings.database_url, "tank.dump")
-        await dump_database(getattr(self.settings, "openma_database_url", "postgresql:///oma"), "oma.dump")
+        await dump_database(self.settings.database_url, "tank")
+        await dump_database(getattr(self.settings, "openma_database_url", "postgresql:///oma"), "oma")
         data_root = Path(self.settings.data_dir).resolve()
         if target.resolve().is_relative_to(data_root):
             raise ValueError("Backup destination must be outside live data directory")

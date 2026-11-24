@@ -4,6 +4,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
+import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 SANDBOX_OPTIONS = (
@@ -20,13 +21,46 @@ def module(name):
 
 def test_postgres_image_hba_confines_every_role_to_its_compose_address():
     rules = (ROOT / "deploy/postgres/pg_hba.conf").read_text().splitlines()
-    assert rules[:2] == ["local all postgres peer", "local all all reject"]
+    assert rules[:3] == [
+        "local all postgres peer",
+        "local tank,oma tank_backup peer map=tank_backup",
+        "local all all reject",
+    ]
+    assert [rule for rule in rules if "tank_backup" in rule] == [
+        "local tank,oma tank_backup peer map=tank_backup"
+    ]
+    assert (ROOT / "deploy/postgres/pg_ident.conf").read_text().splitlines() == [
+        "tank_backup tank tank_backup"
+    ]
     assert "host tank,tank_replay tank 172.30.60.0/24 scram-sha-256" in rules
     assert "host oma oma 172.30.60.0/24 scram-sha-256" in rules
     assert "host tank tank_agent 172.30.60.10/32 scram-sha-256" in rules
     assert "host tank_replay tank_replay_agent 172.30.60.10/32 scram-sha-256" in rules
     assert rules[-2:] == ["host all all 0.0.0.0/0 reject", "host all all ::/0 reject"]
     assert not any(rule.split()[-1] in ("trust", "password", "md5") for rule in rules)
+
+
+def test_backup_socket_and_snapshot_are_isolated_with_or_without_grafana():
+    services = yaml.safe_load((ROOT / "compose.yaml").read_text())["services"]
+    grafana = yaml.safe_load((ROOT / "compose.grafana.yaml").read_text())["services"]
+    for stack in (services, services | grafana):
+        assert {
+            name: mount
+            for name, service in stack.items()
+            for mount in service.get("volumes", ())
+            if mount.startswith("backup-socket:")
+        } == {
+            "postgres": "backup-socket:/var/run/postgresql",
+            "tank-backup": "backup-socket:/run/tank-backup-postgres:ro",
+        }
+        assert {
+            name
+            for name, service in stack.items()
+            for mount in service.get("volumes", ())
+            if mount.startswith("backup:")
+        } == {"tank-backup"}
+        assert stack["tank"]["environment"]["TANK_BACKUP_DELEGATED"] == "true"
+        assert set(stack["tank-backup"]["environment"]) == {"TANK_DB_PASSWORD", "TANK_BACKUP_POSTGRES_SOCKET"}
 
 
 @pytest.mark.integration
