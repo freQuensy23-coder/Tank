@@ -122,6 +122,11 @@ async def test_peer_backup_restores_grafana_and_both_application_databases(tmp_p
             INSERT INTO grafana.data_source(uid, secure_json_data)
                 VALUES ('metrics', '{"password":"ZmFrZS1jaXBoZXJ0ZXh0"}');
             INSERT INTO grafana.preferences VALUES (42, 1);
+            SET ROLE tank;
+            CREATE TABLE tank_metrics.backup_visible (id int);
+            INSERT INTO tank_metrics.backup_visible VALUES (7);
+            GRANT USAGE ON SCHEMA tank_metrics TO tank_grafana_reader;
+            GRANT SELECT ON tank_metrics.backup_visible TO tank_grafana_reader;
         """,
         )
         sql(
@@ -253,15 +258,63 @@ async def test_peer_backup_restores_grafana_and_both_application_databases(tmp_p
         snapshot = Path(result["path"])
         assert set(verify_backup(snapshot)["files"]) == {"tank.dump", "oma.dump", "bundles/event.json"}
         for db in ("tank", "oma"):
-            target = f"tank_test_restore_{db}"
-            sql("postgres", f"CREATE DATABASE {target} TEMPLATE template0")
+            sql("postgres", f"ALTER DATABASE {db} RENAME TO tank_test_source_{db}")
             exec_pg(
-                "pg_restore", "--exit-on-error", "-d", target, stdin=(snapshot / f"{db}.dump").read_bytes()
+                "pg_restore",
+                "--create",
+                "--exit-on-error",
+                "-d",
+                "postgres",
+                stdin=(snapshot / f"{db}.dump").read_bytes(),
             )
-            assert sql(target, "SELECT id FROM public.backup_marker").stdout == f"{db}-input\n".encode()
-        restored = "tank_test_restore_tank"
+            assert sql(db, "SELECT id FROM public.backup_marker").stdout == f"{db}-input\n".encode()
+        restored = "tank"
+        hba = sql("postgres", "SHOW hba_file").stdout.decode().strip()
+        original_hba = exec_pg("cat", hba).stdout
+        exec_pg(
+            "sh",
+            "-c",
+            'cat > "$1"',
+            "sh",
+            hba,
+            user="root",
+            stdin=b"host tank tank_grafana_store,tank_grafana_reader 127.0.0.1/32 scram-sha-256\n"
+            + original_hba,
+        )
+        assert sql("postgres", "SELECT pg_reload_conf()").stdout == b"t\n"
+
+        def grafana_sql(account, statement, *, check=True):
+            return exec_pg(
+                "env",
+                f"PGPASSWORD=fixture-{account}",
+                "psql",
+                "-XwAt",
+                "-h",
+                "127.0.0.1",
+                "-v",
+                "ON_ERROR_STOP=1",
+                "-U",
+                f"tank_grafana_{account}",
+                "-d",
+                restored,
+                "-c",
+                statement,
+                check=check,
+            )
+
+        assert grafana_sql("store", "SELECT title FROM dashboard").stdout == b"Tank Operations\n"
+        assert grafana_sql("reader", "SELECT id FROM backup_visible").stdout == b"7\n"
+        assert grafana_sql("reader", "SHOW default_transaction_read_only").stdout == b"on\n"
+        assert grafana_sql("reader", "SHOW statement_timeout").stdout == b"15s\n"
+        assert (
+            grafana_sql("reader", "SELECT has_database_privilege(current_database(), 'TEMP')").stdout
+            == b"f\n"
+        )
+        assert (
+            grafana_sql("store", "SELECT has_database_privilege(current_database(), 'TEMP')").stdout == b"t\n"
+        )
         assert sql(restored, "SELECT last_value FROM grafana.after_provision_id_seq").stdout == b"1\n"
-        assert sql("tank_test_restore_oma", "SELECT id FROM after_provision.events").stdout == b"53\n"
+        assert sql("oma", "SELECT id FROM after_provision.events").stdout == b"53\n"
         assert sql(
             restored,
             "SELECT d.uid, d.title, d.data #>> '{panels,0,title}', p.user_id "

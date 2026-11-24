@@ -149,9 +149,8 @@ roll() {
   services=$(compose "$v" config --services) || return 1
   if grep -qxF tank-backup <<< "$services"; then
     backup=yes
-  else
-    remove_service tank-backup || return 1
   fi
+  remove_service tank-backup || return 1
   if ! dedicated_https "$v"; then
     remove_service grafana-edge || return 1
   fi

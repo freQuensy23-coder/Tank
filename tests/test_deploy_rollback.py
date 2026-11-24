@@ -136,8 +136,9 @@ sleep() { :; }
     calls = (tmp_path / "calls").read_text().splitlines()
     provision = "exec -T -u postgres postgres provision-tank-backup"
     start_backup = "up -d --no-deps --wait --wait-timeout 30 tank-backup"
+    assert calls.index("remove tank-backup") < calls.index("start postgres")
     if variant == "historical":
-        assert result.returncode == 0 and "remove tank-backup" in calls
+        assert result.returncode == 0
         assert provision not in calls and start_backup not in calls
     elif variant == "provision-fails":
         assert result.returncode != 0 and calls[-1] == provision
