@@ -144,6 +144,16 @@ healthy() {
   return 1
 }
 
+quiesce_legacy_backup() {
+  local id mounts
+  id=$(docker ps -q --filter label=com.docker.compose.project=tank --filter label=com.docker.compose.service=tank) || return 1
+  [ -n "$id" ] || return 0
+  mounts=$(docker inspect -f '{{range .Mounts}}{{if and (eq .Destination "/backup") .RW}}writable-backup{{end}}{{end}}' "$id") || return 1
+  if [ "$mounts" = writable-backup ]; then
+    docker stop -t 20 "$id" >/dev/null || return 1
+  fi
+}
+
 roll() {
   local v=$1 svc old_cap new_cap pid ready handoff wait services backup=no
   services=$(compose "$v" config --services) || return 1
@@ -151,6 +161,7 @@ roll() {
     backup=yes
   fi
   remove_service tank-backup || return 1
+  if [ "$backup" = yes ]; then quiesce_legacy_backup || return 1; fi
   if ! dedicated_https "$v"; then
     remove_service grafana-edge || return 1
   fi
@@ -162,6 +173,9 @@ roll() {
   for svc in postgres clickhouse openma; do
     start_backend "$v" "$svc" || return 1
     healthy "tank-$svc-1" || { echo "$svc not healthy"; return 1; }
+    if [ "$svc" = postgres ] && [ "$backup" = yes ]; then
+      compose "$v" exec -T -u postgres postgres provision-tank-backup || return 1
+    fi
   done
 
   old_cap=$(docker ps -q --filter label=com.docker.compose.project=tank --filter label=com.docker.compose.service=tank-capture)
@@ -189,7 +203,12 @@ roll() {
   compose "$v" up -d --no-deps tank || return 1
   healthy tank-tank-1 || { echo "tank not running"; return 1; }
   if grafana_enabled "$v"; then start_grafana "$v" || return 1; fi
-  if [ "$backup" = yes ]; then
+}
+
+start_backup() {
+  local v=$1 services
+  services=$(compose "$v" config --services) || return 1
+  if grep -qxF tank-backup <<< "$services"; then
     compose "$v" exec -T -u postgres postgres provision-tank-backup || return 1
     compose "$v" up -d --no-deps --wait --wait-timeout 30 tank-backup || return 1
   fi
@@ -231,7 +250,7 @@ recover() {
   fi
   if [ "$status" -ne 0 ] && [ "$tank_started" = yes ] && [ -n "$previous" ]; then
     echo "rollback to $previous $(date -u +%T)"
-    if roll "$previous"; then
+    if roll "$previous" && start_backup "$previous"; then
       printf '%s\n' "$previous" > deployed.next && mv deployed.next deployed
       echo "rolled back to $previous"
       if shared_nginx "$previous" && ! https_ready; then echo 'Grafana restored locally; shared HTTPS is unavailable'; fi
@@ -288,7 +307,8 @@ tank_started=yes
 if roll "$SHA"; then
   while [ $(( $(date +%s) - start )) -lt "$LIMIT" ]; do
     if out=$(verify "$since" 2>&1); then
-      printf '%s\n' "$SHA" > deployed.next && mv deployed.next deployed
+      start_backup "$SHA" || { echo 'Backup service failed activation after release verification'; exit 1; }
+      printf '%s\n' "$SHA" > deployed.next && mv deployed.next deployed || exit 1
       echo "VERIFIED $SHA after $(( $(date +%s) - start ))s"
       docker image ls --format '{{.Repository}}:{{.Tag}}' | grep '^ghcr.io/frequensy23-coder/tank/' \
         | grep -v -E ":(${SHA}|${previous:-none})\$" | xargs -r docker rmi >/dev/null 2>&1 || true
